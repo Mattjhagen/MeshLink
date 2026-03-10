@@ -1,0 +1,45 @@
+{
+  "name": "MeshNode",
+  "type": "object",
+  "properties": {
+    "user_email": {
+      "type": "string",
+      "description": "Email of the user this node belongs to"
+    },
+    "display_name": {
+      "type": "string",
+      "description": "Display name or handle"
+    },
+    "public_key": {
+      "type": "string",
+      "description": "Public key for key exchange (base64)"
+    },
+    "last_seen": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "signal_strength": {
+      "type": "number",
+      "description": "Simulated signal strength 0-100",
+      "default": 85
+    },
+    "battery": {
+      "type": "number",
+      "description": "Simulated battery level 0-100",
+      "default": 90
+    },
+    "node_x": {
+      "type": "number",
+      "description": "X position on the mesh map (0-100)"
+    },
+    "node_y": {
+      "type": "number",
+      "description": "Y position on the mesh map (0-100)"
+    }
+  },
+  "required": [
+    "user_email",
+    "display_name",
+    "public_key"
+  ]
+}
