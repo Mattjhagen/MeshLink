@@ -32,6 +32,17 @@ Run the app: `npm run dev`
 
 Open [Base44.com](http://Base44.com) and click on Publish.
 
+**Deploy via Netlify**
+
+To deploy this MVP web app to Netlify:
+
+1. Connect your GitHub repository to Netlify.
+2. In the Netlify site settings, configure the following build settings:
+   - **Base directory:** `src/`
+   - **Build command:** `npm run build`
+   - **Publish directory:** `src/dist/` (or `dist` if Netlify automatically resolves it relative to the Base directory)
+3. Add your environment variables (`VITE_BASE44_APP_ID`, `VITE_BASE44_APP_BASE_URL`) under Netlify's **Site configuration > Environment variables**.
+4. Deploy the site.
 **Docs & Support**
 
 Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)

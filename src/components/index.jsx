@@ -1,119 +1,113 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { base44 } from "@/api/base44Client";
-import { Radio, Shield, Users, Wifi, Lock, ChevronRight, MessageSquare } from "lucide-react";
+import { Radio, Users, Lock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
-import MeshMap from "@/components/mesh/MeshMap";
 import NodeCard from "@/components/mesh/NodeCard";
 import ChatPanel from "@/components/mesh/ChatPanel";
 import SetupModal from "@/components/mesh/SetupModal";
-import { decryptMessage, getConversationId } from "@/components/crypto";
+import { decryptMessage } from "@/components/ui/crypto";
+import { registerPlugin } from '@capacitor/core';
+
+let NearbyMeshPlugin = null;
+try {
+  NearbyMeshPlugin = registerPlugin('NearbyMesh');
+} catch {
+  console.warn("Capacitor Native plugins are not available in this environment. Falling back to web MVP mode.");
+}
 
 export default function Home() {
   const [user, setUser] = useState(null);
-  const [myNode, setMyNode] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
-  const [showSetup, setShowSetup] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [showSetup, setShowSetup] = useState(true);
+  const [loading, setLoading] = useState(false);
   const userRef = useRef(null);
-  const selectedNodeRef = useRef(null);
 
-  const loadData = async () => {
-    const me = await base44.auth.me();
-    setUser(me);
-
-    const myNodes = await base44.entities.MeshNode.filter({ user_email: me.email });
-    if (myNodes.length === 0) {
-      setShowSetup(true);
-      setLoading(false);
-      return;
-    }
-
-    const currentNode = myNodes[0];
-    // Refresh last_seen
-    await base44.entities.MeshNode.update(currentNode.id, {
-      last_seen: new Date().toISOString(),
-    });
-    setMyNode(currentNode);
-
-    const allNodes = await base44.entities.MeshNode.list("-last_seen", 50);
-    setNodes(allNodes);
-    setLoading(false);
-  };
-
+  // When plugin emits a discovered node
   useEffect(() => {
-    loadData();
-    const interval = setInterval(async () => {
-      if (!user) return;
-      const all = await base44.entities.MeshNode.list("-last_seen", 50);
-      setNodes(all);
-    }, 15000);
-    return () => clearInterval(interval);
+    const nodeFoundSub = NearbyMeshPlugin.addListener('onNodeDiscovered', (node) => {
+      setNodes(prev => {
+        // Quick deduplication based on email
+        if (prev.find(n => n.user_email === node.email)) return prev;
+        return [...prev, {
+          id: node.endpointId,
+          user_email: node.email,
+          display_name: node.name,
+          last_seen: new Date().toISOString()
+        }];
+      });
+      toast.success(`Discovered ${node.name || node.email}`);
+    });
+
+    const nodeLostSub = NearbyMeshPlugin.addListener('onNodeLost', (node) => {
+      setNodes(prev => prev.filter(n => n.id !== node.endpointId));
+    });
+
+    return () => {
+      nodeFoundSub.then(sub => sub.remove());
+      nodeLostSub.then(sub => sub.remove());
+    };
   }, []);
 
-  const handleSetupComplete = () => {
+  const handleSetupComplete = async (setupUser) => {
+    setUser({ email: setupUser.email, display_name: setupUser.display_name });
     setShowSetup(false);
-    loadData();
+    setLoading(true);
+
+    // Initialize native plugin with setup data
+    try {
+      await NearbyMeshPlugin.initializeNode({
+        email: setupUser.email,
+        displayName: setupUser.display_name
+      });
+
+      // Start offline mesh
+      await NearbyMeshPlugin.startMesh();
+      setLoading(false);
+    } catch (err) {
+      console.error("Native plugin err", err);
+      setLoading(false);
+    }
   };
 
-  // Keep refs in sync so the subscription closure always sees current values
   useEffect(() => { userRef.current = user; }, [user]);
-  useEffect(() => { selectedNodeRef.current = selectedNode; }, [selectedNode]);
 
-  // Real-time incoming message notifications
+  // Handle incoming messages for toast alerts
   useEffect(() => {
-    const unsub = base44.entities.Message.subscribe(async (event) => {
-      if (event.type !== "create") return;
-      const msg = event.data;
+    const msgSub = NearbyMeshPlugin.addListener('onMessageReceived', async (msg) => {
       const me = userRef.current;
-      if (!me || msg.recipient_email !== me.email) return;
+      if (!me || msg.recipient_email !== me.email) return; // Not for me
 
-      // Don't notify if this conversation is already open
-      const activeConvId = selectedNodeRef.current
-        ? getConversationId(me.email, selectedNodeRef.current.user_email)
-        : null;
-      if (msg.conversation_id === activeConvId) return;
-
-      // Decrypt and show toast
-      let preview = "New encrypted message";
+      let preview = "New encrypted offline message";
       try {
         const plaintext = await decryptMessage(msg.encrypted_content, msg.iv, msg.sender_email, msg.recipient_email);
         preview = plaintext.length > 60 ? plaintext.slice(0, 60) + "…" : plaintext;
-      } catch {}
+      } catch (e) { console.error("Toast descrypt error", e) }
 
-      // Resolve sender display name from loaded nodes
-      const senderNode = nodes.find((n) => n.user_email === msg.sender_email);
-      const senderName = senderNode?.display_name ?? msg.sender_email.split("@")[0];
+      const senderName = msg.sender_email.split("@")[0]; // Simple fallback
 
       toast(senderName, {
         description: preview,
         icon: <MessageSquare className="w-4 h-4 text-primary" />,
-        action: {
-          label: "Open",
-          onClick: () => {
-            if (senderNode) setSelectedNode(senderNode);
-          },
-        },
-        duration: 6000,
-        className: "font-mono",
+        duration: 4000,
+        className: "font-mono border-primary/50",
       });
     });
-    return unsub;
-  }, [nodes]);
 
-  const otherNodes = nodes.filter((n) => n.user_email !== user?.email);
-  const activeCount = otherNodes.filter(
-    (n) => n.last_seen && Date.now() - new Date(n.last_seen).getTime() < 5 * 60 * 1000
-  ).length;
+    return () => { msgSub.then(m => m.remove()); }
+  }, []);
+
+  if (showSetup) {
+    // Generate a dummy 'user' to bypass the auth requirement of SetupModal
+    return <SetupModal user={{ id: "native", email: "guest@mesh.local" }} onComplete={handleSetupComplete} />;
+  }
 
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
         <motion.div
           className="flex flex-col items-center gap-4"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
         >
           <motion.div
             className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center"
@@ -123,19 +117,17 @@ export default function Home() {
             <Radio className="w-7 h-7 text-primary" />
           </motion.div>
           <p className="font-mono text-sm text-muted-foreground tracking-widest">
-            SCANNING MESH…
+            STARTING OFFLINE MESH…
           </p>
         </motion.div>
       </div>
     );
   }
 
+  const activeCount = nodes.length;
+
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
-      {showSetup && user && (
-        <SetupModal user={user} onComplete={handleSetupComplete} />
-      )}
-
       {/* Top Bar */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
         <div className="flex items-center gap-3">
@@ -144,10 +136,10 @@ export default function Home() {
           </div>
           <div>
             <h1 className="font-mono font-bold text-sm tracking-wider">
-              MESH<span className="text-primary">NET</span>
+              MESH<span className="text-primary">NET</span> (Offline)
             </h1>
             <p className="text-[10px] font-mono text-muted-foreground">
-              {myNode?.display_name ?? "connecting…"}
+              {user?.display_name ?? "connected"}
             </p>
           </div>
         </div>
@@ -156,12 +148,12 @@ export default function Home() {
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20">
             <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             <span className="font-mono text-[10px] text-primary">
-              {activeCount} ACTIVE
+              {activeCount} CONNECTED
             </span>
           </div>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary border border-border">
             <Lock className="w-3 h-3 text-primary" />
-            <span className="font-mono text-[10px] text-muted-foreground">E2E</span>
+            <span className="font-mono text-[10px] text-muted-foreground">AES-256</span>
           </div>
         </div>
       </header>
@@ -170,38 +162,25 @@ export default function Home() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Node list */}
         <div className="w-64 border-r border-border flex flex-col shrink-0 overflow-hidden">
-          {/* Mesh map */}
-          <div className="h-48 border-b border-border relative bg-muted/30 overflow-hidden shrink-0">
-            {/* Grid overlay */}
-            <div
-              className="absolute inset-0 opacity-10"
-              style={{
-                backgroundImage:
-                  "linear-gradient(hsl(var(--primary)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--primary)) 1px, transparent 1px)",
-                backgroundSize: "24px 24px",
-              }}
-            />
-            <MeshMap
-              nodes={nodes}
-              myEmail={user?.email}
-              onSelectNode={setSelectedNode}
-              selectedNodeEmail={selectedNode?.user_email}
-            />
+          {/* Mesh map placeholder */}
+          <div className="h-48 border-b border-border relative bg-muted/30 flex flex-col items-center justify-center shrink-0">
+            <Radio className="w-10 h-10 text-primary opacity-30 mb-2" />
+            <span className="text-xs text-muted-foreground font-mono opacity-50">Local Scanning Enabled</span>
           </div>
 
           {/* Node list */}
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             <p className="font-mono text-[10px] text-muted-foreground tracking-widest px-1 mb-3">
-              NEARBY NODES ({otherNodes.length})
+              NEARBY NODES ({nodes.length})
             </p>
-            {otherNodes.length === 0 ? (
+            {nodes.length === 0 ? (
               <div className="text-center py-8">
                 <Users className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-40" />
                 <p className="text-xs text-muted-foreground font-mono">No nodes detected</p>
-                <p className="text-[10px] text-muted-foreground mt-1">Invite others to join</p>
+                <p className="text-[10px] text-muted-foreground mt-1 text-balance">Turn on Bluetooth and Wi-Fi</p>
               </div>
             ) : (
-              otherNodes.map((node) => (
+              nodes.map((node) => (
                 <NodeCard
                   key={node.id}
                   node={node}
@@ -235,41 +214,20 @@ export default function Home() {
               <motion.div
                 key="empty"
                 className="h-full flex items-center justify-center"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }}
               >
                 <div className="text-center max-w-xs px-6">
                   <motion.div
                     className="w-20 h-20 rounded-2xl bg-primary/5 border border-primary/20 flex items-center justify-center mx-auto mb-5"
-                    animate={{
-                      boxShadow: [
-                        "0 0 20px rgba(0,245,255,0.05)",
-                        "0 0 40px rgba(0,245,255,0.15)",
-                        "0 0 20px rgba(0,245,255,0.05)",
-                      ],
-                    }}
-                    transition={{ duration: 3, repeat: Infinity }}
                   >
                     <Radio className="w-8 h-8 text-primary opacity-60" />
                   </motion.div>
                   <h2 className="font-mono font-bold text-base text-foreground mb-2">
-                    Select a node
+                    Native P2P Active
                   </h2>
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                    Pick a nearby node from the list to start an encrypted mesh conversation.
+                    Local mesh network is scanning. Select a node to start a directly encrypted chat.
                   </p>
-                  <div className="mt-6 grid grid-cols-3 gap-2 text-center">
-                    {[
-                      { icon: Shield, label: "AES-256" },
-                      { icon: Radio, label: "Mesh" },
-                      { icon: Wifi, label: "Multi-hop" },
-                    ].map(({ icon: Icon, label }) => (
-                      <div key={label} className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-secondary/50 border border-border">
-                        <Icon className="w-4 h-4 text-primary" />
-                        <span className="text-[10px] font-mono text-muted-foreground">{label}</span>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               </motion.div>
             )}

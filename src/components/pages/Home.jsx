@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
-import { Radio, Shield, Users, Wifi, Lock, ChevronRight, MessageSquare } from "lucide-react";
+import { Radio, Shield, Users, Wifi, Lock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import MeshMap from "@/components/mesh/MeshMap";
 import NodeCard from "@/components/mesh/NodeCard";
@@ -80,7 +80,7 @@ export default function Home() {
       try {
         const plaintext = await decryptMessage(msg.encrypted_content, msg.iv, msg.sender_email, msg.recipient_email);
         preview = plaintext.length > 60 ? plaintext.slice(0, 60) + "…" : plaintext;
-      } catch {}
+      } catch (err) { console.debug("preview dec err", err); }
 
       // Resolve sender display name from loaded nodes
       const senderNode = nodes.find((n) => n.user_email === msg.sender_email);

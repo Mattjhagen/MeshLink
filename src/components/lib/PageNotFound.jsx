@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
 
 
-export default function PageNotFound({}) {
+export default function PageNotFound() {
     const location = useLocation();
     const pageName = location.pathname.substring(1);
 
@@ -13,12 +13,12 @@ export default function PageNotFound({}) {
             try {
                 const user = await base44.auth.me();
                 return { user, isAuthenticated: true };
-            } catch (error) {
+            } catch {
                 return { user: null, isAuthenticated: false };
             }
         }
     });
-    
+
     return (
         <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
             <div className="max-w-md w-full">
@@ -28,19 +28,19 @@ export default function PageNotFound({}) {
                         <h1 className="text-7xl font-light text-slate-300">404</h1>
                         <div className="h-0.5 w-16 bg-slate-200 mx-auto"></div>
                     </div>
-                    
+
                     {/* Main Message */}
                     <div className="space-y-3">
                         <h2 className="text-2xl font-medium text-slate-800">
                             Page Not Found
                         </h2>
                         <p className="text-slate-600 leading-relaxed">
-                            The page <span className="font-medium text-slate-700">"{pageName}"</span> could not be found in this application.
+                            The page <span className="font-medium text-slate-700">&quot;{pageName}&quot;</span> could not be found in this application.
                         </p>
                     </div>
-                    
+
                     {/* Admin Note */}
-                    {isFetched && authData.isAuthenticated && authData.user?.role === 'admin' && (
+                    {isFetched && authData?.isAuthenticated && authData?.user?.role === 'admin' && (
                         <div className="mt-8 p-4 bg-slate-100 rounded-lg border border-slate-200">
                             <div className="flex items-start space-x-3">
                                 <div className="flex-shrink-0 w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center mt-0.5">
@@ -49,6 +49,14 @@ export default function PageNotFound({}) {
                                 <div className="text-left space-y-1">
                                     <p className="text-sm font-medium text-slate-700">Admin Note</p>
                                     <p className="text-sm text-slate-600 leading-relaxed">
-                                        This could mean that the AI hasn't implemented this page yet. Ask it to implement it in the chat.
+                                        This could mean that the AI hasn&apos;t implemented this page yet. Ask it to implement it in the chat.
                                     </p>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
